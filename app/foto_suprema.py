@@ -1698,6 +1698,7 @@ def autoprueba(carpeta_capturas):
             time.sleep(0.01)
 
     def captura(nombre):
+        print(f"::notice title=Autoprueba::{nombre}", flush=True)
         esperar(0.4)
         v.grab().save(os.path.join(carpeta_capturas, nombre))
 
@@ -1770,7 +1771,19 @@ def main():
     if "--autoprueba" in sys.argv:
         i = sys.argv.index("--autoprueba")
         destino = sys.argv[i + 1] if len(sys.argv) > i + 1 else "capturas"
-        sys.exit(autoprueba(destino))
+        import faulthandler
+        import traceback
+        faulthandler.enable()
+        try:
+            codigo = autoprueba(destino)
+        except BaseException:
+            tb = traceback.format_exc()
+            print(tb, flush=True)
+            # anotación de GitHub (se ve sin iniciar sesión)
+            msg = tb.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+            print(f"::error title=Autoprueba::{msg}", flush=True)
+            codigo = 1
+        sys.exit(codigo)
     app = QApplication(sys.argv)
     ventana = iniciar(app)  # noqa: F841
     sys.exit(app.exec())
