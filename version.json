@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0",
+  "archivos": ["foto_suprema.py", "nucleo.py"],
+  "lanzador_minimo": 1,
+  "notas": "Primera versión"
+}

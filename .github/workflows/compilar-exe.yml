@@ -1,0 +1,54 @@
+# Compila FotoSuprema.exe en GitHub (Windows) y lo publica en "Releases".
+# Se ejecuta solo cuando cambia el lanzador, o a mano desde la pestaña "Actions".
+# Los cambios en app/ NO necesitan compilar: el .exe se los descarga solo.
+name: Compilar FotoSuprema.exe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lanzador/**"
+      - ".github/workflows/compilar-exe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compilar:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pillow pillow-heif
+
+      - name: Crear el .exe
+        run: >
+          pyinstaller --noconfirm --onefile --windowed
+          --name FotoSuprema
+          --icon lanzador/icono.ico
+          --add-data "app;app"
+          --add-data "lanzador/icono.ico;."
+          --hidden-import PIL.ImageTk
+          --collect-all pillow_heif
+          lanzador/lanzador.py
+
+      - name: Publicar en Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: exe-${{ github.run_number }}
+          name: Foto Suprema (exe ${{ github.run_number }})
+          make_latest: true
+          files: dist/FotoSuprema.exe
+          body: |
+            Descarga **FotoSuprema.exe** y ábrelo. No hace falta instalar nada.
+            Se actualiza solo cada vez que se sube una versión nueva a GitHub.
+
+            HECHO POR @BYALVARO__
