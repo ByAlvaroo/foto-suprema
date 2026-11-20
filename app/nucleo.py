@@ -13,7 +13,7 @@ import threading
 from datetime import datetime
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageOps
     try:
         from pillow_heif import register_heif_opener  # fotos .HEIC de iPhone
         register_heif_opener()
@@ -342,12 +342,24 @@ class Biblioteca:
         for k in CARPETAS:
             os.makedirs(self.ruta(k), exist_ok=True)
         self.ruta_stats = os.path.join(raiz, "foto_suprema_estadisticas.json")
+        self.ruta_similares = os.path.join(raiz, "foto_suprema_similares.json")
+        self.similares = cargar_json(self.ruta_similares)   # nombre en "Por revisar" -> {"ref", "d"}
         self.stats = dict(STATS_VACIAS)
         self.stats.update({k: v for k, v in cargar_json(self.ruta_stats).items() if k in STATS_VACIAS})
         self._lock = threading.Lock()
 
     def ruta(self, clave):
         return os.path.join(self.raiz, CARPETAS[clave])
+
+    def similar_de(self, ruta):
+        """Si la foto (en Por revisar) se parece a otra mejor, devuelve {"ref": nombre, "d": distancia}."""
+        if os.path.normcase(os.path.dirname(ruta)) != os.path.normcase(self.ruta("pend")):
+            return None
+        return self.similares.get(os.path.basename(ruta))
+
+    def guardar_similares(self, datos):
+        self.similares = datos
+        guardar_json(self.ruta_similares, datos)
 
     def ruta_por_borrar(self):
         r = os.path.join(self.raiz, CARPETA_POR_BORRAR)
@@ -759,3 +771,134 @@ class Reordenador(TareaCopia):
                 self.errores += 1
             self.bytes_hechos += tam
             self.hechos += 1
+
+
+# ----------------------------------------------------------------------
+# fotos similares (huella visual "dHash", solo entre fotos del mismo mes y año)
+# ----------------------------------------------------------------------
+SENSIBILIDAD = {"estricta": 5, "normal": 10, "amplia": 15}
+
+
+def huella(ruta, tam=8):
+    """Huella de 64 bits que casi no cambia si la foto se redimensiona, se comprime o cambia un poco."""
+    with Image.open(ruta) as im:
+        if im.format == "JPEG":
+            try:
+                im.draft("L", (tam * 16, tam * 16))
+            except Exception:
+                pass
+        im = ImageOps.exif_transpose(im)
+        im = im.convert("L").resize((tam + 1, tam), Image.BILINEAR)
+        px = im.tobytes()
+    bits = 0
+    for y in range(tam):
+        fila = y * (tam + 1)
+        for x in range(tam):
+            bits = (bits << 1) | (1 if px[fila + x] > px[fila + x + 1] else 0)
+    return bits
+
+
+def distancia(a, b):
+    return bin(a ^ b).count("1")
+
+
+def color_medio(ruta):
+    """Colores de la foto reducida a 4x4 (48 números): sirve para no confundir fotos
+    con la misma forma pero distinto color."""
+    with Image.open(ruta) as im:
+        if im.format == "JPEG":
+            try:
+                im.draft("RGB", (64, 64))
+            except Exception:
+                pass
+        im = ImageOps.exif_transpose(im).convert("RGB").resize((4, 4), Image.BILINEAR)
+        return list(im.tobytes())
+
+
+def diferencia_color(a, b):
+    return sum(abs(x - y) for x, y in zip(a, b)) / max(1, len(a))
+
+
+class TareaSimilares(TareaCopia):
+    """Busca fotos parecidas en "Por revisar". Marca todas menos la mejor de cada grupo
+    (la de más resolución y, a igualdad, la que más pesa)."""
+    verbo = "Analizadas"
+
+    def __init__(self, biblioteca, umbral=10):
+        super().__init__()
+        self.bib = biblioteca
+        self.umbral = umbral
+        self.grupos = 0
+        self.marcadas = 0
+        self.ruta_cache = os.path.join(biblioteca.raiz, ".huellas_cache.json")
+
+    def _run(self):
+        fotos = [r for r in self.bib.listar("pend") if not es_video(r)]
+        self.encontradas_escaneo = len(fotos)
+        self.total = len(fotos)
+        self.bytes_total = max(1, len(fotos))
+        cache = cargar_json(self.ruta_cache)
+        nueva_cache = {}
+        self.fase = "copiando"
+        self.inicio_copia = time.time()
+        datos = []   # (ruta, huella, mes, pixeles, bytes)
+        for r in fotos:
+            if self.cancelado:
+                return
+            try:
+                st = os.stat(r)
+                clave = f"{os.path.basename(r)}|{st.st_size}|{int(st.st_mtime)}"
+                if clave in cache and len(cache[clave]) == 4:
+                    h, mes, pix, col = cache[clave]
+                else:
+                    h = huella(r)
+                    col = color_medio(r)
+                    f, _ = fecha_de(r)
+                    mes = f"{f.year}-{f.month:02d}" if f else "sin-fecha"
+                    with Image.open(r) as im:
+                        pix = im.size[0] * im.size[1]
+                nueva_cache[clave] = [h, mes, pix, col]
+                datos.append((r, h, mes, pix, st.st_size, col))
+            except Exception:
+                self.errores += 1
+            self.hechos += 1
+            self.bytes_hechos += 1
+        guardar_json(self.ruta_cache, nueva_cache)
+
+        # agrupar por mes y comparar solo dentro de cada mes
+        por_mes = {}
+        for d in datos:
+            por_mes.setdefault(d[2], []).append(d)
+        resultado = {}
+        for lista in por_mes.values():
+            n = len(lista)
+            padre = list(range(n))
+
+            def raiz(i):
+                while padre[i] != i:
+                    padre[i] = padre[padre[i]]
+                    i = padre[i]
+                return i
+            dist_min = {}
+            for i in range(n):
+                for j in range(i + 1, n):
+                    d = distancia(lista[i][1], lista[j][1])
+                    if d <= self.umbral and diferencia_color(lista[i][5], lista[j][5]) <= self.umbral * 2.5:
+                        padre[raiz(i)] = raiz(j)
+                        dist_min[i] = min(dist_min.get(i, 99), d)
+                        dist_min[j] = min(dist_min.get(j, 99), d)
+            grupos = {}
+            for i in range(n):
+                grupos.setdefault(raiz(i), []).append(i)
+            for miembros in grupos.values():
+                if len(miembros) < 2:
+                    continue
+                self.grupos += 1
+                mejor = max(miembros, key=lambda i: (lista[i][3], lista[i][4]))
+                for i in miembros:
+                    if i != mejor:
+                        resultado[os.path.basename(lista[i][0])] = {
+                            "ref": os.path.basename(lista[mejor][0]), "d": dist_min.get(i, 0)}
+        self.marcadas = len(resultado)
+        self.copiadas = self.marcadas
+        self.bib.guardar_similares(resultado)

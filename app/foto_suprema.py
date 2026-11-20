@@ -24,7 +24,7 @@ from PIL import Image, ImageOps
 
 import nucleo as N
 
-VERSION_APP = "2.1.0"
+VERSION_APP = "2.2.0"
 FIRMA = "HECHO POR @BYALVARO__"
 
 # ----------------------------------------------------------------------
@@ -657,6 +657,8 @@ QPushButton#seg:checked {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, s
 #arbol {{ background: #1f2226; border-radius: 12px; padding: 12px 14px; color: {TEXTO2};
           font-family: "Cascadia Mono", "Consolas", monospace; font-size: 13px; }}
 #seccion {{ color: {NAR_A}; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; }}
+#similar {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {NAR_A}, stop:1 {NAR_B});
+            color: #1c1d20; border-radius: 12px; padding: 8px 14px; font-weight: 700; font-size: 13px; }}
 """
 
 
@@ -933,9 +935,11 @@ class PaginaInicio(PaginaScroll):
         L.addLayout(cab)
 
         # siguiente paso recomendado
+        n_sim = len(bib.similares)
         if n["pend"]:
             paso = (G["foto"], f"Tienes {N.num(n['pend'])} fotos por revisar",
-                    "← eliminar   ↑ favorito   → mantener   ↓ saltar", "Empezar a revisar", lambda: self.v.ir_revision("pend"))
+                    ("← eliminar   ↑ favorito   → mantener   ↓ saltar" +
+                     (f"      ·      ≈ {N.num(n_sim)} similares detectadas" if n_sim else "")), "Empezar a revisar", lambda: self.v.ir_revision("pend"))
         elif n["draft"]:
             paso = (G["borrar"], f"{N.num(n['draft'])} fotos esperan en el borrador",
                     "Bórralas para siempre o restaura las que quieras conservar.", "Confirmar borradores",
@@ -1166,6 +1170,33 @@ class PaginaAjustes(PaginaScroll):
                                "Las favoritas se guardan con la misma organización de años/meses.",
                                cfg.get("organizar_favoritos", True), lambda v: self._set("organizar_favoritos", v)))
 
+        # --- similares
+        L.addWidget(etiqueta("FOTOS SIMILARES", "seccion"))
+        L.addWidget(FilaOpcion("Buscar fotos similares al subir",
+                               "Compara cada foto con las del mismo mes y año y marca las repetidas o casi iguales "
+                               "(ráfagas, copias, fotos reenviadas…).",
+                               cfg.get("detectar_similares", True), lambda v: self._set("detectar_similares", v)))
+        L.addWidget(FilaOpcion("Borrar directamente las similares",
+                               "Si una foto tiene la etiqueta SIMILAR, al pulsar ← se borra sin pasar por el borrador. "
+                               "La mejor de cada grupo nunca se marca.",
+                               cfg.get("borrar_similares", True), lambda v: self._set("borrar_similares", v)))
+        cs = Carta()
+        csl = QHBoxLayout(cs)
+        csl.setContentsMargins(22, 16, 22, 16)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        col.addWidget(etiqueta("Sensibilidad", "h3"))
+        col.addWidget(etiqueta("Estricta: solo casi idénticas · Amplia: también fotos parecidas", "tenue"))
+        csl.addLayout(col, 1)
+        seg2 = Segmentado([("estricta", "Estricta"), ("normal", "Normal"), ("amplia", "Amplia")],
+                          cfg.get("sensibilidad", "normal"))
+        seg2.setMinimumWidth(360)
+        seg2.cambiado.connect(lambda v: self._set("sensibilidad", v))
+        csl.addWidget(seg2)
+        csl.addSpacing(10)
+        csl.addWidget(boton("Buscar ahora", "primario", self.v.buscar_similares))
+        L.addWidget(cs)
+
         # --- subida
         L.addWidget(etiqueta("AL SUBIR", "seccion"))
         L.addWidget(FilaOpcion("Saltar fotos repetidas",
@@ -1345,7 +1376,10 @@ class PaginaProgreso(QWidget):
             self.l_pct.setText(f"{t.porcentaje():.1f} %".replace(".", ","))
             if t.fase != "fin":
                 self.l_eta.setText(f"⏱  Tiempo estimado restante:  {N.tiempo_legible(t.eta())}")
-            self.c_vel.setText(f"⚡ {t.por_segundo():.0f} archivos/s · {t.mb_por_segundo():.1f} MB/s".replace(".", ","))
+            if isinstance(t, N.TareaSimilares):
+                self.c_vel.setText(f"⚡ {t.por_segundo():.0f} fotos/s")
+            else:
+                self.c_vel.setText(f"⚡ {t.por_segundo():.0f} archivos/s · {t.mb_por_segundo():.1f} MB/s".replace(".", ","))
             self.c_tiempo.setText(f"Transcurrido {N.tiempo_legible(t.transcurrido())}")
             self.c_tam.setText(f"{N.tamano_legible(t.bytes_hechos)} de {N.tamano_legible(t.bytes_total)}")
             extra = []
@@ -1356,6 +1390,7 @@ class PaginaProgreso(QWidget):
             self.c_extra.setText("  ·  ".join(extra))
             for c in (self.c_vel, self.c_tiempo, self.c_tam):
                 c.show()
+            self.c_tam.setVisible(not isinstance(t, N.TareaSimilares))
             self.c_extra.setVisible(bool(extra))
         if t.fase == "fin":
             self.timer.stop()
@@ -1377,7 +1412,18 @@ class PaginaProgreso(QWidget):
             self.barra.setValue(1000)
             self.l_pct.setText("100 %")
             self.l_grande.setText("¡Listo!")
-            if isinstance(t, N.Reordenador):
+            if isinstance(t, N.Importador) and t.copiadas and self.v.cfg.get("detectar_similares", True):
+                # después de subir, se buscan las fotos similares automáticamente
+                self.v.buscar_similares()
+                return
+            if isinstance(t, N.TareaSimilares):
+                if t.marcadas:
+                    self.l_eta.setText(f"≈  {N.num(t.marcadas)} fotos similares en {N.num(t.grupos)} grupos")
+                    self.l_det.setText("Al revisarlas verás la etiqueta SIMILAR. Si pulsas ← se borran directamente "
+                                       "(la mejor de cada grupo se queda sin marcar).")
+                else:
+                    self.l_eta.setText("✅  No hay fotos repetidas ni parecidas")
+            elif isinstance(t, N.Reordenador):
                 self.l_eta.setText(f"✅  {N.num(t.copiadas)} movidas a su carpeta · {N.num(t.repetidas)} ya estaban en su sitio")
             elif isinstance(t, N.Organizador):
                 años = sorted({k.split("/")[0] for k in t.carpetas_creadas})
@@ -1393,7 +1439,7 @@ class PaginaProgreso(QWidget):
             self.botones.addWidget(boton("Abrir «Mantener»", "primario", lambda: abrir_en_sistema(self.v.bib.ruta("keep")), G["carpeta"]))
         elif isinstance(t, N.Organizador):
             self.botones.addWidget(boton("Abrir carpeta", "primario", lambda: abrir_en_sistema(t.destino), G["carpeta"]))
-        elif self.v.bib.contar("pend"):
+        elif self.v.bib.contar("pend") and not t.error_fatal:
             self.botones.addWidget(boton("Empezar a revisar", "primario", lambda: self.v.ir_revision("pend"), G["foto"]))
 
 
@@ -1506,6 +1552,9 @@ class PaginaRevision(QWidget):
         self.pila.addWidget(self.fin)
         L.addWidget(self.marco, 1)
         self.toast = Toast(self.marco)
+        self.etq_similar = QLabel(self.marco)
+        self.etq_similar.setObjectName("similar")
+        self.etq_similar.hide()
 
         # reproductor
         self.player = QMediaPlayer(self)
@@ -1592,6 +1641,8 @@ class PaginaRevision(QWidget):
 
     # ------------------------------------------------------------------
     def empezar(self, modo):
+        self.movidos = {}   # ruta original -> dónde está ahora (para saber si la "buena" sigue viva)
+        self.nombres_guardados = {os.path.basename(r) for k in ("keep", "fav") for r in self.v.bib.listar(k)}
         self.modo = modo
         self.lista = self.v.bib.listar(modo)
         self.pos = 0
@@ -1679,6 +1730,7 @@ class PaginaRevision(QWidget):
                     self.visor.poner(pm)
         self._ruta_mostrada = ruta
         self._info(ruta)
+        self._etiqueta_similar(ruta)
         w, h = self._tam_previa()
         for r in self.lista[self.pos + 1:self.pos + 4]:
             self.cargador.pedir_previa(r, w, h)
@@ -1713,8 +1765,41 @@ class PaginaRevision(QWidget):
         self.c_cam.setVisible(bool(inf["camara"]))
         self.c_cam.setText(f"📷  {inf['camara']}")
 
+    def _similar(self, ruta):
+        if self.modo != "pend" or not ruta or not self.v.cfg.get("detectar_similares", True):
+            return None
+        return self.v.bib.similar_de(ruta)
+
+    def _ref_viva(self, ref):
+        """¿Sigue existiendo la foto 'buena' del grupo? (si no, no se borra nada directamente)"""
+        p = os.path.join(self.v.bib.ruta("pend"), ref)
+        if os.path.exists(p):
+            return True
+        d = self.movidos.get(p)
+        if d and os.path.exists(d):
+            malas = (os.path.normcase(self.v.bib.ruta("draft")),
+                     os.path.normcase(os.path.join(self.v.bib.raiz, N.CARPETA_POR_BORRAR)))
+            return not os.path.normcase(os.path.dirname(d)).startswith(malas)
+        return ref in self.nombres_guardados
+
+    def _etiqueta_similar(self, ruta):
+        sim = self._similar(ruta)
+        if sim:
+            directo = self.v.cfg.get("borrar_similares", True) and self._ref_viva(sim["ref"])
+            extra = "   ·   ← la borra directamente" if directo else ""
+            self.etq_similar.setText(f"≈  SIMILAR   ·   se parece a {sim['ref']}{extra}")
+            self.etq_similar.adjustSize()
+            self.etq_similar.move(18, 18)
+            self.etq_similar.show()
+            self.etq_similar.raise_()
+            self.b_elim.lbl.setText("Borrar ya" if directo else "Eliminar")
+        else:
+            self.etq_similar.hide()
+            self.b_elim.lbl.setText("Eliminar")
+
     def _pantalla_final(self):
         self.pila.setCurrentIndex(2)
+        self.etq_similar.hide()
         for c in (self.c_nombre, self.c_res, self.c_tam, self.c_fecha, self.c_cam):
             c.hide()
         self.c_zoom.hide()
@@ -1751,6 +1836,8 @@ class PaginaRevision(QWidget):
                 lab.setStyleSheet("background: transparent; border: none;")
                 continue
             borde = f"2px solid {NAR_B}" if i == 0 else f"1px solid {BORDE}"
+            if i > 0 and self._similar(self.lista[idx]):
+                borde = f"2px dashed {NAR_A}"
             lab.setStyleSheet(f"background: #202327; border: {borde}; border-radius: 10px; color: {TEXTO3};")
             ruta = self.lista[idx]
             if N.es_video(ruta):
@@ -1785,11 +1872,14 @@ class PaginaRevision(QWidget):
             return
         if N.es_video(ruta):
             self._soltar_video()   # Windows bloquea el archivo mientras se reproduce
-        boton_ = {"eliminar": self.b_elim, "favorito": self.b_fav, "mantener": self.b_mant,
+        boton_ = {"eliminar": self.b_elim, "similar": self.b_elim, "favorito": self.b_fav, "mantener": self.b_mant,
                   "borrar": self.b_borrar, "restaurar": self.b_rest, "saltar": self.b_saltar}[tipo]
+        sim = self._similar(ruta) if tipo == "eliminar" else None
+        if sim and self.v.cfg.get("borrar_similares", True) and self._ref_viva(sim["ref"]):
+            tipo = "similar"
         try:
             bib = self.v.bib
-            reg = {"eliminar": bib.eliminar, "favorito": bib.favorito, "mantener": bib.mantener,
+            reg = {"eliminar": bib.eliminar, "similar": bib.eliminar_definitivo, "favorito": bib.favorito, "mantener": bib.mantener,
                    "restaurar": bib.restaurar, "borrar": bib.eliminar_definitivo,
                    "saltar": bib.saltar}[tipo](ruta)
         except Exception as e:
@@ -1798,12 +1888,15 @@ class PaginaRevision(QWidget):
         if tipo == "saltar":
             self.saltadas += 1
         boton_.circulo.destello()
-        textos = {"eliminar": ("🗑  Enviada al borrador", "#ff8a8e"), "favorito": ("⭐  Favorita", NAR_A),
+        textos = {"similar": ("🗑  Similar borrada", "#ff8a8e"), "eliminar": ("🗑  Enviada al borrador", "#ff8a8e"), "favorito": ("⭐  Favorita", NAR_A),
                   "mantener": ("✔  Mantenida", VERDE), "borrar": ("🗑  Borrada para siempre", "#ff8a8e"),
                   "restaurar": ("↩  Restaurada en Mantener", VERDE), "saltar": ("⏭  Saltada", TEXTO2)}
         if self.v.cfg.get("avisos", True):
             self.toast.mostrar(*textos[tipo])
         self.historial.append(reg)
+        for op in reg.get("ops", []):
+            if op[0] == "mover":
+                self.movidos[op[2]] = op[1]
         self.pos += 1
         self.mostrar()
 
@@ -1819,6 +1912,9 @@ class PaginaRevision(QWidget):
             return
         if reg["tipo"] == "saltar":
             self.saltadas = max(0, self.saltadas - 1)
+        for op in reg.get("ops", []):
+            if op[0] == "mover":
+                self.movidos.pop(op[2], None)
         self.pos = max(0, self.pos - 1)
         if ruta:
             self.lista[self.pos] = ruta
@@ -1971,6 +2067,7 @@ class FiltroTeclas(QObject):
 OPCIONES_POR_DEFECTO = {
     "organizar_mantener": "no", "organizar_favoritos": True, "saltar_repetidas": True,
     "autoplay": True, "miniaturas": True, "avisos": True, "papelera": False, "organizar_modo": "meses",
+    "detectar_similares": True, "borrar_similares": True, "sensibilidad": "normal",
 }
 
 
@@ -2143,6 +2240,13 @@ class Ventana(QMainWindow):
         t = N.Organizador(self.bib, destino, por_meses)
         self._tarea(t, "Organizando por años y meses" if por_meses else "Organizando por años", t.destino, G["calendario"])
 
+    def buscar_similares(self):
+        if self.p_prog.tarea is not None and self.p_prog.tarea.fase != "fin":
+            return
+        umbral = N.SENSIBILIDAD.get(self.cfg.get("sensibilidad", "normal"), 10)
+        self._tarea(N.TareaSimilares(self.bib, umbral), "Buscando fotos similares",
+                    "Solo se comparan fotos del mismo mes y año", G["foto"])
+
     def reordenar(self):
         if self._ocupado():
             return
@@ -2218,6 +2322,8 @@ def autoprueba(carpeta_capturas):
         ex[271], ex[272] = "Apple", "iPhone 12"
         sub = ["", "Viaje", os.path.join("Viaje", "Dia 2")][i % 3]
         im.save(os.path.join(origen, sub, f"IMG_{i:04d}.jpg"), exif=ex, quality=85)
+        if i == 1:   # una "ráfaga": la misma foto más pequeña -> debe salir como SIMILAR
+            im.resize((w // 2, h // 2)).save(os.path.join(origen, sub, "IMG_0001_rafaga.jpg"), exif=ex, quality=70)
     with open(os.path.join(origen, "VID_20190101_120000.mp4"), "wb") as f:
         f.write(b"\x00" * 2048)  # vídeo falso: debe mostrar aviso sin romper nada
 
@@ -2253,7 +2359,9 @@ def autoprueba(carpeta_capturas):
     v.importar_rutas([origen])
     esperar_tarea()
     captura("02_subida_terminada.png")
-    assert v.bib.contar("pend") == 15, v.bib.contar("pend")
+    assert v.bib.contar("pend") == 16, v.bib.contar("pend")
+    assert "IMG_0001_rafaga.jpg" in v.bib.similares, v.bib.similares
+    assert v.bib.similares["IMG_0001_rafaga.jpg"]["ref"] == "IMG_0001.jpg", v.bib.similares
     v.ir_inicio()
     captura("03_inicio_con_fotos.png")
 
@@ -2275,10 +2383,21 @@ def autoprueba(carpeta_capturas):
     # a partir de aquí, Mantener se ordena sola por años y meses
     v.cfg["organizar_mantener"] = "meses"
     tecla(Qt.Key.Key_Up)
+    # ahora toca la ráfaga (SIMILAR): ← la borra directamente, sin pasar por el borrador
+    assert os.path.basename(v.p_rev._actual()) == "IMG_0001_rafaga.jpg", v.p_rev._actual()
+    assert v.p_rev.etq_similar.isVisible()
+    captura("06_similar.png")
+    n_borr = v.bib.contar("draft")
+    tecla(Qt.Key.Key_Left)
+    assert v.bib.contar("draft") == n_borr, "la similar no debía ir al borrador"
+    assert os.listdir(os.path.join(v.bib.raiz, N.CARPETA_POR_BORRAR)) == ["IMG_0001_rafaga.jpg"]
+    tecla(Qt.Key.Key_Backspace)   # volver atrás la recupera
+    assert os.path.basename(v.p_rev._actual()) == "IMG_0001_rafaga.jpg"
+    tecla(Qt.Key.Key_Left)
     while v.p_rev._actual() is not None and not N.es_video(v.p_rev._actual()):
         tecla(Qt.Key.Key_Right)
     esperar(1.0)
-    captura("06_video.png")
+    captura("06b_video.png")
     tecla(Qt.Key.Key_Left)
     while v.p_rev._actual() is not None:
         tecla(Qt.Key.Key_Right)

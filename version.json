@@ -1,6 +1,6 @@
 {
-  "version": "2.1.0",
+  "version": "2.2.0",
   "archivos": ["foto_suprema.py", "nucleo.py"],
   "lanzador_minimo": 2,
-  "notas": "Menú lateral, arrastrar y soltar, Ajustes, Mantener ordenada por años/meses, Papelera"
+  "notas": "Fotos similares, menú lateral, arrastrar y soltar, Ajustes, Mantener ordenada por años/meses, Papelera"
 }

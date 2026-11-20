@@ -27,6 +27,7 @@ jobs:
       - name: Autoprueba de la app
         env:
           QT_QPA_PLATFORM: offscreen
+          QT_QPA_FONTDIR: C:\Windows\Fonts
         run: python app/foto_suprema.py --autoprueba capturas
       - name: Guardar capturas
         if: always()
