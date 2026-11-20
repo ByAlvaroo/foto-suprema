@@ -1739,7 +1739,7 @@ def autoprueba(carpeta_capturas):
     while v.p_rev._actual() is not None:
         tecla(Qt.Key.Key_Right)
     captura("06_final.png")
-    assert v.bib.contar("pend") == 1, v.bib.contar("pend")  # la que se saltó
+    assert v.bib.contar("pend") == 0, v.bib.contar("pend")  # el salto se deshizo con "volver atrás"
 
     v.ir_revision("draft")
     esperar(0.5)
