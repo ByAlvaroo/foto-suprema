@@ -165,13 +165,25 @@ def version_empaquetada():
 
 
 def actualizar_exe(pant):
-    if not getattr(sys, "frozen", False):
+    """Cambia el .exe por el de la última Release. Con protecciones para que nunca
+    entre en bucle (p. ej. si GitHub aún está compilando el .exe nuevo)."""
+    if not getattr(sys, "frozen", False) or "--recien-actualizado" in sys.argv:
         return False
+    import hashlib
+    marca = os.path.join(BASE_DATOS, "intento_exe.json")
+    previo = leer_json(marca)
+    if time.time() - previo.get("t", 0) < 30 * 60:   # como mucho un intento cada 30 min
+        return False
+    with open(marca, "w", encoding="utf-8") as f:
+        json.dump({"t": time.time()}, f)
     pant.poner("Descargando la nueva versión del programa…")
     datos = descargar(EXE_ULTIMO, timeout=300)
     if len(datos) < 5_000_000:
         return False
     actual = sys.executable
+    with open(actual, "rb") as f:
+        if hashlib.sha256(f.read()).digest() == hashlib.sha256(datos).digest():
+            return False   # la Release todavía es este mismo .exe: no hay nada que cambiar
     nuevo = actual + ".nuevo"
     with open(nuevo, "wb") as f:
         f.write(datos)
@@ -182,7 +194,7 @@ ping 127.0.0.1 -n 3 > nul
 :otra
 move /y "{nuevo}" "{actual}" > nul 2>&1
 if exist "{nuevo}" (ping 127.0.0.1 -n 2 > nul & goto otra)
-start "" "{actual}"
+start "" "{actual}" --recien-actualizado
 del "%~f0"
 ''')
     subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000)
