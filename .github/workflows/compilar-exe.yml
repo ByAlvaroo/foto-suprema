@@ -34,6 +34,17 @@ jobs:
         with:
           name: capturas-de-pantalla
           path: capturas/
+      - name: Publicar capturas en la rama "capturas"
+        if: always()
+        shell: bash
+        run: |
+          cd capturas || exit 0
+          git init -q -b capturas
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -qm "Capturas de ${GITHUB_SHA}" || exit 0
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" capturas
 
   compilar:
     needs: probar

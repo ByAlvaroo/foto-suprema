@@ -154,6 +154,61 @@ def ocultar_en_windows(ruta):
             pass
 
 
+def a_papelera(rutas):
+    """Manda archivos a la Papelera de reciclaje de Windows (se pueden recuperar).
+    En otros sistemas, o si falla, se borran normalmente."""
+    rutas = [os.path.abspath(r) for r in rutas if os.path.exists(r)]
+    if not rutas:
+        return
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class SHFILEOPSTRUCTW(ctypes.Structure):
+                _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT),
+                            ("pFrom", ctypes.c_void_p), ("pTo", ctypes.c_void_p),
+                            ("fFlags", ctypes.c_uint16), ("fAnyOperationsAborted", wintypes.BOOL),
+                            ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", ctypes.c_void_p)]
+            for i in range(0, len(rutas), 200):
+                trozo = rutas[i:i + 200]
+                buf = ctypes.create_unicode_buffer("\0".join(trozo) + "\0\0")
+                op = SHFILEOPSTRUCTW()
+                op.wFunc = 3                       # FO_DELETE
+                op.pFrom = ctypes.cast(buf, ctypes.c_void_p)
+                op.fFlags = 0x40 | 0x10 | 0x4 | 0x400   # ALLOWUNDO | NOCONFIRMATION | SILENT | NOERRORUI
+                ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+            rutas = [r for r in rutas if os.path.exists(r)]   # lo que no se pudo, se borra normal
+        except Exception:
+            pass
+    for r in rutas:
+        try:
+            os.remove(r)
+        except OSError:
+            pass
+
+
+def borrar_vacias(desde, tope):
+    """Borra carpetas vacías subiendo desde 'desde' hasta 'tope' (sin borrar 'tope')."""
+    tope = os.path.normcase(os.path.abspath(tope))
+    d = os.path.abspath(desde)
+    while os.path.normcase(d).startswith(tope) and os.path.normcase(d) != tope:
+        try:
+            os.rmdir(d)
+        except OSError:
+            return
+        d = os.path.dirname(d)
+
+
+def subcarpeta_fecha(fecha, modo):
+    """'anios' -> 2019   ·   'meses' -> 2019/03 - Marzo   ·   sin fecha -> Sin fecha"""
+    if fecha is None:
+        return "Sin fecha"
+    if modo == "meses":
+        return os.path.join(str(fecha.year), f"{fecha.month:02d} - {MESES[fecha.month - 1]}")
+    return str(fecha.year)
+
+
 # ----------------------------------------------------------------------
 # fecha y cámara
 # ----------------------------------------------------------------------
@@ -280,8 +335,10 @@ STATS_VACIAS = {"subidas": 0, "eliminadas": 0, "favoritas": 0, "mantenidas": 0,
 
 
 class Biblioteca:
-    def __init__(self, raiz):
+    def __init__(self, raiz, opciones=None):
         self.raiz = raiz
+        # se comparte con la configuración de la app: los cambios se aplican al momento
+        self.opciones = opciones if opciones is not None else {}
         for k in CARPETAS:
             os.makedirs(self.ruta(k), exist_ok=True)
         self.ruta_stats = os.path.join(raiz, "foto_suprema_estadisticas.json")
@@ -300,7 +357,14 @@ class Biblioteca:
         return r
 
     def listar(self, clave):
+        """Mantener y Favoritos se miran con todas sus subcarpetas (2019/03 - Marzo…)."""
         carpeta = self.ruta(clave)
+        if clave in ("keep", "fav"):
+            res = []
+            for d, subs, nombres in os.walk(carpeta):
+                subs[:] = sorted(s for s in subs if not s.startswith("."))
+                res.extend(os.path.join(d, n) for n in sorted(nombres, key=str.lower) if es_valido(n))
+            return res
         try:
             with os.scandir(carpeta) as it:
                 nombres = [e.name for e in it if e.is_file() and es_valido(e.name)]
@@ -308,6 +372,25 @@ class Biblioteca:
             return []
         nombres.sort(key=lambda n: n.lower())
         return [os.path.join(carpeta, n) for n in nombres]
+
+    # --- organización automática de Mantener / Favoritos ----------------
+    def modo_de(self, clave):
+        modo = self.opciones.get("organizar_mantener", "no")
+        if clave == "keep":
+            return modo
+        if clave == "fav" and self.opciones.get("organizar_favoritos", True):
+            return modo
+        return "no"
+
+    def carpeta_destino(self, src, clave):
+        base = self.ruta(clave)
+        modo = self.modo_de(clave)
+        if modo not in ("anios", "meses"):
+            return base
+        fecha, _ = fecha_de(src)
+        d = os.path.join(base, subcarpeta_fecha(fecha, modo))
+        os.makedirs(d, exist_ok=True)
+        return d
 
     def contar(self, clave):
         return len(self.listar(clave))
@@ -335,10 +418,10 @@ class Biblioteca:
         return dst
 
     def _mover(self, src, clave):
-        return self._mover_a(src, self.ruta(clave))
+        return self._mover_a(src, self.carpeta_destino(src, clave))
 
     def _copiar(self, src, clave):
-        dst = ruta_libre(self.ruta(clave), os.path.basename(src))
+        dst = ruta_libre(self.carpeta_destino(src, clave), os.path.basename(src))
         shutil.copy2(src, dst)
         return dst
 
@@ -383,8 +466,12 @@ class Biblioteca:
                     os.remove(a)
             elif op == "mover":
                 destino = b if not os.path.exists(b) else ruta_libre(os.path.dirname(b), os.path.basename(b))
+                os.makedirs(os.path.dirname(destino), exist_ok=True)
                 shutil.move(a, destino)
                 restaurada = destino
+            for clave in ("keep", "fav"):   # quitar carpetas de año/mes que se han quedado vacías
+                if os.path.normcase(a).startswith(os.path.normcase(self.ruta(clave) + os.sep)):
+                    borrar_vacias(os.path.dirname(a), self.ruta(clave))
         if registro.get("stats"):
             self.sumar(registro["stats"], signo=-1)
         return restaurada
@@ -394,43 +481,47 @@ class Biblioteca:
         r = os.path.join(self.raiz, CARPETA_POR_BORRAR)
         if not os.path.isdir(r):
             return 0
-        n = 0
-        for nombre in os.listdir(r):
-            p = os.path.join(r, nombre)
-            try:
-                if os.path.isfile(p):
+        archivos = [os.path.join(r, n) for n in os.listdir(r) if os.path.isfile(os.path.join(r, n))]
+        if self.opciones.get("papelera"):
+            a_papelera(archivos)
+        else:
+            for p in archivos:
+                try:
                     os.remove(p)
-                    n += 1
-            except OSError:
-                pass
-        return n
+                except OSError:
+                    pass
+        return len(archivos)
 
     def borrar_todo_borrador(self):
         n, liberado = 0, 0
-        for p in self.listar("draft"):
+        lista = self.listar("draft")
+        for p in lista:
             try:
-                t = os.path.getsize(p)
-                os.remove(p)
+                liberado += os.path.getsize(p)
                 n += 1
-                liberado += t
             except OSError:
                 pass
+        if self.opciones.get("papelera"):
+            a_papelera(lista)
+        else:
+            for p in lista:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
         self.sumar({"borradas_def": n, "bytes_liberados": liberado})
         return n, liberado
 
     def indice_existentes(self):
         vistos = set()
         for k in CARPETAS:
-            try:
-                with os.scandir(self.ruta(k)) as it:
-                    for e in it:
-                        if e.is_file():
-                            try:
-                                vistos.add((e.name.lower(), e.stat().st_size))
-                            except OSError:
-                                pass
-            except FileNotFoundError:
-                pass
+            for d, subs, nombres in os.walk(self.ruta(k)):
+                subs[:] = [x for x in subs if not x.startswith(".")]
+                for n in nombres:
+                    try:
+                        vistos.add((n.lower(), os.path.getsize(os.path.join(d, n))))
+                    except OSError:
+                        pass
         return vistos
 
 
@@ -626,3 +717,45 @@ class Organizador(TareaCopia):
             self.hechos += 1
         if self.copiadas:
             self.bib.sumar({"organizadas": self.copiadas})
+
+
+class Reordenador(TareaCopia):
+    """Mueve lo que YA hay en Mantener (y Favoritos) a la organización elegida en Ajustes
+    (por años, por años y meses, o todo junto sin carpetas)."""
+    verbo = "Ordenadas"
+
+    def __init__(self, biblioteca):
+        super().__init__()
+        self.bib = biblioteca
+
+    def _run(self):
+        claves = ["keep"]
+        if self.bib.opciones.get("organizar_favoritos", True):
+            claves.append("fav")
+        lista = []
+        for k in claves:
+            for r in self.bib.listar(k):
+                try:
+                    lista.append((k, r, os.path.getsize(r)))
+                except OSError:
+                    pass
+                self.encontradas_escaneo += 1
+        self.total = len(lista)
+        self.bytes_total = sum(t for _, _, t in lista) or 1
+        self.fase = "copiando"
+        self.inicio_copia = time.time()
+        for k, ruta, tam in lista:
+            if self.cancelado:
+                break
+            try:
+                destino = self.bib.carpeta_destino(ruta, k)
+                if os.path.normcase(os.path.dirname(ruta)) == os.path.normcase(destino):
+                    self.repetidas += 1          # ya estaba en su sitio
+                else:
+                    shutil.move(ruta, ruta_libre(destino, os.path.basename(ruta)))
+                    borrar_vacias(os.path.dirname(ruta), self.bib.ruta(k))
+                    self.copiadas += 1
+            except Exception:
+                self.errores += 1
+            self.bytes_hechos += tam
+            self.hechos += 1

@@ -24,7 +24,7 @@ from PIL import Image, ImageOps
 
 import nucleo as N
 
-VERSION_APP = "2.0.0"
+VERSION_APP = "2.1.0"
 FIRMA = "HECHO POR @BYALVARO__"
 
 # ----------------------------------------------------------------------
@@ -637,42 +637,210 @@ class VisorImagen(QWidget):
         p.end()
 
 
+QSS_EXTRA = f"""
+#lateral {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2b2e34, stop:1 #24272b);
+            border-right: 1px solid #30343a; }}
+#zona {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2f3339, stop:1 #282b30);
+         border: 2px dashed #4a4136; border-radius: 22px; }}
+#zona[activa="true"] {{ border: 2px dashed {NAR_B}; background: #33302b; }}
+#fila {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #30343a, stop:1 #2a2d32);
+         border: 1px solid {BORDE}; border-top-color: #3d4249; border-radius: 14px; }}
+#fila:hover {{ border: 1px solid #4d4438; }}
+QPushButton#seg {{ background: #23262a; border: 1px solid #33373d; border-radius: 12px; padding: 12px 18px;
+                   color: {TEXTO2}; font-weight: 600; }}
+QPushButton#seg:hover {{ color: {TEXTO}; border-color: #4d4438; }}
+QPushButton#seg:checked {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {NAR_A}, stop:1 {NAR_B});
+                           color: #1c1d20; border: none; }}
+#opcion {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {CARTA_A}, stop:1 {CARTA_B});
+           border: 2px solid {BORDE}; border-radius: 18px; }}
+#opcion[elegida="true"] {{ border: 2px solid {NAR_B}; }}
+#arbol {{ background: #1f2226; border-radius: 12px; padding: 12px 14px; color: {TEXTO2};
+          font-family: "Cascadia Mono", "Consolas", monospace; font-size: 13px; }}
+#seccion {{ color: {NAR_A}; font-size: 12px; font-weight: 700; letter-spacing: 1.5px; }}
+"""
+
+
 # ======================================================================
-# PÁGINA: INICIO
+# COMPONENTES NUEVOS
 # ======================================================================
-class TarjetaAccion(QFrame):
-    def __init__(self, glifo, titulo, texto, cmd, activo=True, colores=(NAR_A, NAR_B)):
+class NavBoton(QPushButton):
+    """Botón del menú lateral: icono + texto + contador."""
+
+    def __init__(self, glifo, texto):
         super().__init__()
-        self.setObjectName("accion")
+        self.glifo, self.texto, self.contador = glifo, texto, ""
+        self.setCheckable(True)
+        self.setFixedHeight(48)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
-        self.setCursor(Qt.CursorShape.PointingHandCursor if activo else Qt.CursorShape.ArrowCursor)
-        self.cmd = cmd
-        sombra(self, 24, 6, 120)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(18, 16, 18, 16)
-        lay.setSpacing(16)
-        ic = IconoCirculo(glifo, 52, *colores)
-        lay.addWidget(ic, 0, Qt.AlignmentFlag.AlignTop)
-        col = QVBoxLayout()
-        col.setSpacing(4)
-        t = etiqueta(titulo, "h3")
-        d = etiqueta(texto, "tenue", wrap=True)
-        d.setStyleSheet("font-size: 13px;")
-        col.addWidget(t)
-        col.addWidget(d)
-        col.addStretch()
-        lay.addLayout(col, 1)
-        self.setEnabled(activo)
-        if not activo:
-            t.setStyleSheet(f"color: {TEXTO3};")
-        self.setMinimumHeight(110)
+
+    def poner_contador(self, n):
+        self.contador = N.num(n) if n else ""
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(2, 3, -2, -3)
+        sel = self.isChecked()
+        if sel:
+            g = QLinearGradient(r.topLeft(), r.topRight())
+            g.setColorAt(0, QColor(NAR_A))
+            g.setColorAt(1, QColor(NAR_B))
+            p.setBrush(QBrush(g))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(r, 12, 12)
+        elif self.underMouse():
+            p.setBrush(QColor("#33373e"))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(r, 12, 12)
+        col = QColor("#1c1d20") if sel else QColor(TEXTO if self.isEnabled() else TEXTO3)
+        p.setPen(col)
+        p.setFont(fuente_iconos(18))
+        p.drawText(QRectF(r.x() + 14, r.y(), 26, r.height()), Qt.AlignmentFlag.AlignCenter, self.glifo)
+        f = QFont("Segoe UI")
+        f.setPixelSize(15)
+        f.setWeight(QFont.Weight.DemiBold if sel else QFont.Weight.Medium)
+        p.setFont(f)
+        p.drawText(QRectF(r.x() + 52, r.y(), r.width() - 100, r.height()),
+                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self.texto)
+        if self.contador:
+            f.setPixelSize(12)
+            f.setBold(True)
+            p.setFont(f)
+            ancho = max(28, p.fontMetrics().horizontalAdvance(self.contador) + 16)
+            br = QRectF(r.right() - ancho - 10, r.center().y() - 11, ancho, 22)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, 60) if sel else QColor(NAR_B))
+            p.drawRoundedRect(br, 11, 11)
+            p.setPen(QColor("#1c1d20") if not sel else QColor("#1c1d20"))
+            p.drawText(br, Qt.AlignmentFlag.AlignCenter, self.contador)
+        p.end()
+
+
+class CheckCuadro(QWidget):
+    """Casilla naranja como la del diseño (cuadrado con ✓)."""
+    cambiado = Signal(bool)
+
+    def __init__(self, marcado=False):
+        super().__init__()
+        self.marcado = marcado
+        self.setFixedSize(34, 34)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def poner(self, v, emitir=False):
+        self.marcado = bool(v)
+        self.update()
+        if emitir:
+            self.cambiado.emit(self.marcado)
+
+    def alternar(self):
+        self.poner(not self.marcado, True)
 
     def mouseReleaseEvent(self, e):
-        if self.isEnabled() and e.button() == Qt.MouseButton.LeftButton and self.rect().contains(e.position().toPoint()):
-            self.cmd()
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.alternar()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(2, 2, 30, 30)
+        if self.marcado:
+            g = QLinearGradient(r.topLeft(), r.bottomRight())
+            g.setColorAt(0, QColor(NAR_A))
+            g.setColorAt(1, QColor(NAR_B))
+            p.setBrush(QBrush(g))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(r, 7, 7)
+            pen = QPen(QColor("white"), 3)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(pen)
+            p.drawPolyline([QPointF(9, 17), QPointF(14.5, 22.5), QPointF(24, 11)])
+        else:
+            p.setBrush(QColor("#202327"))
+            p.setPen(QPen(QColor("#3a3e45"), 1.5))
+            p.drawRoundedRect(r, 7, 7)
+        p.end()
 
 
-class PaginaInicio(QWidget):
+class FilaOpcion(QFrame):
+    """Fila de ajuste: título + explicación + casilla. Se puede pulsar en toda la fila."""
+
+    def __init__(self, titulo, texto, marcado, al_cambiar):
+        super().__init__()
+        self.setObjectName("fila")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(20, 14, 16, 14)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        col.addWidget(etiqueta(titulo, "h3"))
+        d = etiqueta(texto, "tenue", wrap=True)
+        d.setStyleSheet("font-size: 13px;")
+        col.addWidget(d)
+        lay.addLayout(col, 1)
+        self.check = CheckCuadro(marcado)
+        self.check.cambiado.connect(al_cambiar)
+        lay.addWidget(self.check)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.check.alternar()
+
+
+class Segmentado(QWidget):
+    """Grupo de botones donde solo uno está elegido (estilo pastilla naranja)."""
+    cambiado = Signal(str)
+
+    def __init__(self, opciones, valor):
+        super().__init__()
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+        self.botones = {}
+        for clave, texto in opciones:
+            b = QPushButton(texto)
+            b.setObjectName("seg")
+            b.setCheckable(True)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            b.clicked.connect(lambda _=False, c=clave: self.poner(c, True))
+            lay.addWidget(b, 1)
+            self.botones[clave] = b
+        self.poner(valor)
+
+    def poner(self, clave, emitir=False):
+        for c, b in self.botones.items():
+            b.setChecked(c == clave)
+        if emitir:
+            self.cambiado.emit(clave)
+
+
+def arbol_ejemplo(modo, raiz="Mantener"):
+    if modo == "meses":
+        return (f"📁 {raiz}\n   📁 2019\n      📁 03 - Marzo\n      📁 08 - Agosto\n"
+                "   📁 2020\n      📁 01 - Enero")
+    if modo == "anios":
+        return f"📁 {raiz}\n   📁 2018\n   📁 2019\n   📁 2020"
+    return f"📁 {raiz}\n   🖼 IMG_0001.jpg\n   🖼 IMG_0002.jpg\n   🖼 …"
+
+
+def cabecera(titulo, sub):
+    w = QWidget()
+    l = QVBoxLayout(w)
+    l.setContentsMargins(0, 0, 0, 0)
+    l.setSpacing(2)
+    l.addWidget(etiqueta(titulo, "titulo"))
+    l.addWidget(etiqueta(sub, "subtitulo"))
+    return w
+
+
+class PaginaScroll(QWidget):
+    """Página con desplazamiento vertical (para pantallas pequeñas)."""
+
     def __init__(self, ventana):
         super().__init__()
         self.v = ventana
@@ -684,36 +852,118 @@ class PaginaInicio(QWidget):
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         lay.addWidget(self.scroll)
 
-    def refrescar(self):
-        bib = self.v.bib
+    def nuevo_interior(self):
         interior = QWidget()
         interior.setObjectName("scrollInterior")
         L = QVBoxLayout(interior)
-        L.setContentsMargins(44, 32, 44, 18)
-        L.setSpacing(22)
+        L.setContentsMargins(40, 32, 40, 22)
+        L.setSpacing(20)
+        return interior, L
 
-        # cabecera
+    def poner_interior(self, interior):
+        viejo = self.scroll.takeWidget()
+        if viejo:
+            viejo.deleteLater()
+        self.scroll.setWidget(interior)
+
+
+class ZonaSoltar(QFrame):
+    """Recuadro para arrastrar carpetas/fotos (o pulsar para elegir)."""
+
+    def __init__(self, ventana):
+        super().__init__()
+        self.v = ventana
+        self.setObjectName("zona")
+        self.setAcceptDrops(True)
+        self.setMinimumHeight(200)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(30, 26, 30, 26)
+        lay.setSpacing(8)
+        lay.addStretch()
+        lay.addWidget(IconoCirculo(G["subir"], 64), 0, Qt.AlignmentFlag.AlignHCenter)
+        t = etiqueta("Arrastra aquí la carpeta del pendrive", "h2")
+        t.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(t)
+        d = etiqueta("Se copian todas las fotos y vídeos de la carpeta y de todas sus subcarpetas. Los originales no se tocan.",
+                     "tenue", wrap=True)
+        d.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(d)
+        bots = QHBoxLayout()
+        bots.addStretch()
+        bots.addWidget(boton("Elegir carpeta", "primario", self.v.subir_carpeta, G["carpeta"]))
+        bots.addWidget(boton("Elegir fotos sueltas", "secundario", self.v.subir_sueltas, G["mas"]))
+        bots.addStretch()
+        lay.addSpacing(6)
+        lay.addLayout(bots)
+        lay.addStretch()
+
+    def _activa(self, a):
+        self.setProperty("activa", "true" if a else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+            self._activa(True)
+
+    def dragLeaveEvent(self, e):
+        self._activa(False)
+
+    def dropEvent(self, e):
+        self._activa(False)
+        rutas = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        if rutas:
+            e.acceptProposedAction()
+            self.v.importar_rutas(rutas)
+
+
+# ======================================================================
+# PÁGINA: INICIO
+# ======================================================================
+class PaginaInicio(PaginaScroll):
+    def refrescar(self):
+        bib = self.v.bib
+        interior, L = self.nuevo_interior()
+        n = {k: bib.contar(k) for k in N.CARPETAS}
+
         cab = QHBoxLayout()
-        cab.setSpacing(16)
-        cab.addWidget(Logo(56))
-        tt = QVBoxLayout()
-        tt.setSpacing(0)
-        tt.addWidget(etiqueta("Foto Suprema", "titulo"))
-        tt.addWidget(etiqueta("Organiza miles de fotos en minutos", "subtitulo"))
-        cab.addLayout(tt)
+        cab.addWidget(cabecera("Inicio", "Sube, revisa y organiza tus fotos en tres pasos"))
         cab.addStretch()
-        ruta = etiqueta(f"📁  {bib.raiz}", "ruta")
-        ruta.setToolTip("Carpeta de la biblioteca")
-        ruta.setMaximumWidth(520)
-        cab.addWidget(ruta)
-        cab.addWidget(boton("Cambiar", "secundario", self.v.cambiar_biblioteca))
-        cab.addWidget(boton("Abrir", "secundario", lambda: abrir_en_sistema(bib.raiz), G["carpeta"]))
         L.addLayout(cab)
 
-        # contadores
-        n = {k: bib.contar(k) for k in N.CARPETAS}
+        # siguiente paso recomendado
+        if n["pend"]:
+            paso = (G["foto"], f"Tienes {N.num(n['pend'])} fotos por revisar",
+                    "← eliminar   ↑ favorito   → mantener   ↓ saltar", "Empezar a revisar", lambda: self.v.ir_revision("pend"))
+        elif n["draft"]:
+            paso = (G["borrar"], f"{N.num(n['draft'])} fotos esperan en el borrador",
+                    "Bórralas para siempre o restaura las que quieras conservar.", "Confirmar borradores",
+                    lambda: self.v.ir_revision("draft"))
+        elif n["keep"]:
+            paso = (G["calendario"], "¡Todo revisado!",
+                    "Ahora puedes copiar tus fotos organizadas por años o por años y meses.", "Organizar",
+                    self.v.ir_organizar)
+        else:
+            paso = None
+        if paso:
+            c = Carta()
+            hl = QHBoxLayout(c)
+            hl.setContentsMargins(22, 18, 22, 18)
+            hl.setSpacing(18)
+            hl.addWidget(IconoCirculo(paso[0], 54))
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            col.addWidget(etiqueta(paso[1], "h2"))
+            col.addWidget(etiqueta(paso[2], "tenue"))
+            hl.addLayout(col, 1)
+            hl.addWidget(boton(paso[3], "primario", paso[4]))
+            L.addWidget(c)
+
+        L.addWidget(ZonaSoltar(self.v))
+
         fila = QHBoxLayout()
-        fila.setSpacing(18)
+        fila.setSpacing(16)
         for clave, titulo, glifo, ca, cb in [
                 ("pend", "Por revisar", G["foto"], NAR_A, NAR_B),
                 ("keep", "Mantener", G["check"], "#5fe0a8", VERDE),
@@ -734,49 +984,18 @@ class PaginaInicio(QWidget):
             fila.addWidget(c, 1)
         L.addLayout(fila)
 
-        # acciones
-        L.addWidget(etiqueta("¿Qué quieres hacer?", "h2"))
-        grid = QGridLayout()
-        grid.setSpacing(18)
-        acciones = [
-            (G["subir"], "Subir una carpeta",
-             "Copia todas las fotos y vídeos de la carpeta y de TODAS sus subcarpetas. Los originales no se tocan.",
-             self.v.subir_carpeta, True),
-            (G["foto"], f"Revisar fotos  ·  {N.num(n['pend'])}",
-             "Una a una a pantalla completa.  ← eliminar   ↑ favorito   → mantener   ↓ saltar",
-             lambda: self.v.ir_revision("pend"), n["pend"] > 0),
-            (G["borrar"], f"Confirmar borradores  ·  {N.num(n['draft'])}",
-             "Repasa lo que mandaste al borrador: bórralo para siempre o restáuralo.",
-             lambda: self.v.ir_revision("draft"), n["draft"] > 0),
-            (G["mas"], "Subir fotos sueltas", "Elige una o varias fotos o vídeos concretos.",
-             self.v.subir_sueltas, True),
-            (G["calendario"], "Organizar por años",
-             "Copia lo de «Mantener» en carpetas 2007, 2008… Solo se crean los años que tengan fotos.",
-             lambda: self.v.organizar(False), n["keep"] > 0),
-            (G["calendario"], "Organizar por años y meses",
-             "Igual, pero dentro de cada año: 01 - Enero, 02 - Febrero… Misma resolución, copias exactas.",
-             lambda: self.v.organizar(True), n["keep"] > 0),
-        ]
-        for i, (gl, t, d, cmd, act) in enumerate(acciones):
-            grid.addWidget(TarjetaAccion(gl, t, d, cmd, act), i // 3, i % 3)
-        for c in range(3):
-            grid.setColumnStretch(c, 1)
-        L.addLayout(grid)
-
-        # estadísticas
         s = bib.stats
         est = Carta()
         el = QVBoxLayout(est)
         el.setContentsMargins(22, 16, 22, 18)
-        el.addWidget(etiqueta("Tus estadísticas", "h3"))
+        el.addWidget(etiqueta("ESTADÍSTICAS", "seccion"))
         g2 = QHBoxLayout()
         g2.setSpacing(10)
         for t, val, col in [
                 ("Subidas", N.num(s["subidas"]), NAR_A),
                 ("Mantenidas", N.num(s["mantenidas"] + s["favoritas"]), VERDE),
                 ("Favoritas", N.num(s["favoritas"]), "#ffd166"),
-                ("Al borrador", N.num(s["eliminadas"]), "#ff8a8e"),
-                ("Borradas del todo", N.num(s["borradas_def"]), ROJO),
+                ("Borradas", N.num(s["borradas_def"]), ROJO),
                 ("Espacio liberado", N.tamano_legible(s["bytes_liberados"]), VERDE),
                 ("Organizadas", N.num(s["organizadas"]), AZUL)]:
             b = QVBoxLayout()
@@ -788,16 +1007,223 @@ class PaginaInicio(QWidget):
             g2.addLayout(b, 1)
         el.addLayout(g2)
         L.addWidget(est)
-
         L.addStretch()
-        pie = etiqueta(f"{FIRMA}   ·   v{VERSION_APP}", "firma")
-        pie.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        L.addWidget(pie)
+        self.poner_interior(interior)
 
-        viejo = self.scroll.takeWidget()
-        if viejo:
-            viejo.deleteLater()
-        self.scroll.setWidget(interior)
+
+# ======================================================================
+# PÁGINA: ORGANIZAR
+# ======================================================================
+class TarjetaOpcion(QFrame):
+    def __init__(self, titulo, texto, modo, al_elegir):
+        super().__init__()
+        self.setObjectName("opcion")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.al_elegir = al_elegir
+        sombra(self, 24, 6, 120)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(22, 20, 22, 20)
+        lay.setSpacing(8)
+        top = QHBoxLayout()
+        top.addWidget(IconoCirculo(G["calendario"], 44))
+        top.addSpacing(8)
+        tl = QVBoxLayout()
+        tl.setSpacing(0)
+        tl.addWidget(etiqueta(titulo, "h3"))
+        tl.addWidget(etiqueta(texto, "muytenue"))
+        top.addLayout(tl, 1)
+        lay.addLayout(top)
+        a = etiqueta(arbol_ejemplo(modo, "Fotos organizadas"), "arbol")
+        lay.addWidget(a)
+
+    def elegir(self, si):
+        self.setProperty("elegida", "true" if si else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.al_elegir()
+
+
+class PaginaOrganizar(PaginaScroll):
+    def refrescar(self):
+        bib = self.v.bib
+        cfg = self.v.cfg
+        interior, L = self.nuevo_interior()
+        n_keep = bib.contar("keep")
+        L.addWidget(cabecera("Organizar", "Copia las fotos de «Mantener» en carpetas por fecha. Misma resolución, copias exactas."))
+
+        L.addWidget(etiqueta("1 · ¿CÓMO LAS QUIERES?", "seccion"))
+        fila = QHBoxLayout()
+        fila.setSpacing(18)
+        self.t_anios = TarjetaOpcion("Por años", "Una carpeta por cada año con fotos", "anios", lambda: self._modo("anios"))
+        self.t_meses = TarjetaOpcion("Por años y meses", "Dentro de cada año, una carpeta por mes", "meses",
+                                     lambda: self._modo("meses"))
+        fila.addWidget(self.t_anios, 1)
+        fila.addWidget(self.t_meses, 1)
+        L.addLayout(fila)
+        self._modo(cfg.get("organizar_modo", "meses"))
+
+        L.addWidget(etiqueta("2 · ¿DÓNDE?", "seccion"))
+        f2 = QHBoxLayout()
+        self.l_dest = etiqueta(f"📁  {cfg.get('ultimo_destino') or 'Elige una carpeta…'}", "ruta")
+        f2.addWidget(self.l_dest, 1)
+        f2.addWidget(boton("Cambiar", "secundario", self._elegir_destino))
+        L.addLayout(f2)
+
+        info = etiqueta(f"Se copiarán {N.num(n_keep)} fotos y vídeos. Solo se crean las carpetas de los años y meses "
+                        "en los que haya al menos una foto. La fecha se saca de las propiedades de la foto "
+                        "(si no la tiene, del nombre o del archivo).", "tenue", wrap=True)
+        L.addWidget(info)
+        b = boton("Organizar ahora", "primario", self._empezar, G["calendario"])
+        b.setEnabled(n_keep > 0)
+        fb = QHBoxLayout()
+        fb.addWidget(b)
+        fb.addStretch()
+        L.addLayout(fb)
+
+        L.addSpacing(10)
+        c = Carta()
+        hl = QHBoxLayout(c)
+        hl.setContentsMargins(22, 16, 22, 16)
+        hl.addWidget(IconoCirculo(G["ajustes"], 44, "#4b5059", "#3a3e45"))
+        hl.addSpacing(10)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        col.addWidget(etiqueta("¿Quieres que «Mantener» se ordene sola?", "h3"))
+        col.addWidget(etiqueta("En Ajustes puedes hacer que cada foto que mantengas vaya directa a su carpeta de año o mes.",
+                               "tenue", wrap=True))
+        hl.addLayout(col, 1)
+        hl.addWidget(boton("Ir a Ajustes", "secundario", self.v.ir_ajustes))
+        L.addWidget(c)
+        L.addStretch()
+        self.poner_interior(interior)
+
+    def _modo(self, m):
+        self.v.cfg["organizar_modo"] = m
+        self.t_anios.elegir(m == "anios")
+        self.t_meses.elegir(m == "meses")
+
+    def _elegir_destino(self):
+        r = QFileDialog.getExistingDirectory(self, "¿Dónde quieres crear las carpetas organizadas?",
+                                             self.v.cfg.get("ultimo_destino") or self.v.bib.raiz)
+        if r:
+            r = os.path.normpath(r)
+            if os.path.normcase(r).startswith(os.path.normcase(self.v.bib.ruta("keep"))):
+                QMessageBox.warning(self, "Foto Suprema", "Elige una carpeta que no esté dentro de «Mantener».")
+                return
+            self.v.cfg["ultimo_destino"] = r
+            N.guardar_config(self.v.cfg)
+            self.l_dest.setText(f"📁  {r}")
+
+    def _empezar(self):
+        if not self.v.cfg.get("ultimo_destino") or not os.path.isdir(self.v.cfg["ultimo_destino"]):
+            self._elegir_destino()
+            if not self.v.cfg.get("ultimo_destino"):
+                return
+        self.v.organizar(self.v.cfg.get("organizar_modo", "meses") == "meses", self.v.cfg["ultimo_destino"])
+
+
+# ======================================================================
+# PÁGINA: AJUSTES
+# ======================================================================
+class PaginaAjustes(PaginaScroll):
+    def refrescar(self):
+        cfg = self.v.cfg
+        interior, L = self.nuevo_interior()
+        L.addWidget(cabecera("Ajustes", "Se guardan solos al cambiarlos"))
+
+        # --- organización automática
+        L.addWidget(etiqueta("CARPETA «MANTENER»", "seccion"))
+        c = Carta()
+        cl = QVBoxLayout(c)
+        cl.setContentsMargins(22, 18, 22, 20)
+        cl.setSpacing(12)
+        cl.addWidget(etiqueta("¿Cómo se guardan las fotos que mantienes?", "h3"))
+        cl.addWidget(etiqueta("Cada foto va directa a su carpeta según la fecha de sus propiedades. "
+                              "Solo se crean las carpetas que tengan fotos.", "tenue", wrap=True))
+        fila = QHBoxLayout()
+        fila.setSpacing(18)
+        izq = QVBoxLayout()
+        seg = Segmentado([("no", "Todas juntas"), ("anios", "Por años"), ("meses", "Por años y meses")],
+                         cfg.get("organizar_mantener", "no"))
+        izq.addWidget(seg)
+        izq.addStretch()
+        fila.addLayout(izq, 3)
+        self.arbol = etiqueta(arbol_ejemplo(cfg.get("organizar_mantener", "no")), "arbol")
+        self.arbol.setMinimumWidth(230)
+        fila.addWidget(self.arbol, 2)
+        cl.addLayout(fila)
+        seg.cambiado.connect(self._cambiar_modo)
+        fr = QHBoxLayout()
+        fr.addWidget(etiqueta("¿Ya tienes fotos en Mantener? Ordénalas ahora con esta opción:", "tenue"))
+        fr.addStretch()
+        fr.addWidget(boton("Reordenar lo que ya hay", "secundario", self.v.reordenar, G["calendario"]))
+        cl.addLayout(fr)
+        L.addWidget(c)
+        L.addWidget(FilaOpcion("Ordenar también «Favoritos»",
+                               "Las favoritas se guardan con la misma organización de años/meses.",
+                               cfg.get("organizar_favoritos", True), lambda v: self._set("organizar_favoritos", v)))
+
+        # --- subida
+        L.addWidget(etiqueta("AL SUBIR", "seccion"))
+        L.addWidget(FilaOpcion("Saltar fotos repetidas",
+                               "Si una foto con el mismo nombre y tamaño ya está en la biblioteca, no se vuelve a copiar.",
+                               cfg.get("saltar_repetidas", True), lambda v: self._set("saltar_repetidas", v)))
+
+        # --- revisión
+        L.addWidget(etiqueta("AL REVISAR", "seccion"))
+        L.addWidget(FilaOpcion("Reproducir los vídeos automáticamente",
+                               "Al llegar a un vídeo empieza solo. Si no, pulsa Espacio.",
+                               cfg.get("autoplay", True), lambda v: self._set("autoplay", v)))
+        L.addWidget(FilaOpcion("Mostrar la tira de miniaturas",
+                               "Las siguientes fotos en pequeño debajo de la foto grande.",
+                               cfg.get("miniaturas", True), lambda v: self._set("miniaturas", v)))
+        L.addWidget(FilaOpcion("Avisos al clasificar",
+                               "Un mensaje rápido («Favorita», «Mantenida»…) cada vez que clasificas.",
+                               cfg.get("avisos", True), lambda v: self._set("avisos", v)))
+
+        # --- borrar
+        L.addWidget(etiqueta("AL BORRAR PARA SIEMPRE", "seccion"))
+        L.addWidget(FilaOpcion("Mandar a la Papelera de Windows",
+                               "Más seguro: aún podrás recuperarlas desde la Papelera. Si lo desactivas se borran del todo.",
+                               cfg.get("papelera", False), lambda v: self._set("papelera", v)))
+
+        # --- biblioteca
+        L.addWidget(etiqueta("BIBLIOTECA", "seccion"))
+        c2 = Carta()
+        h2 = QHBoxLayout(c2)
+        h2.setContentsMargins(22, 16, 22, 16)
+        col = QVBoxLayout()
+        col.setSpacing(4)
+        col.addWidget(etiqueta("Carpeta donde se guarda todo", "h3"))
+        col.addWidget(etiqueta(self.v.bib.raiz, "tenue", wrap=True))
+        h2.addLayout(col, 1)
+        h2.addWidget(boton("Abrir", "secundario", lambda: abrir_en_sistema(self.v.bib.raiz), G["carpeta"]))
+        h2.addWidget(boton("Cambiar", "secundario", self.v.cambiar_biblioteca))
+        L.addWidget(c2)
+
+        pie = etiqueta(f"Foto Suprema v{VERSION_APP}   ·   {FIRMA}", "firma")
+        pie.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        L.addSpacing(8)
+        L.addWidget(pie)
+        L.addStretch()
+        self.poner_interior(interior)
+
+    def _set(self, clave, valor):
+        self.v.cfg[clave] = valor
+        N.guardar_config(self.v.cfg)
+
+    def _cambiar_modo(self, modo):
+        self._set("organizar_mantener", modo)
+        self.arbol.setText(arbol_ejemplo(modo))
+        if self.v.bib.contar("keep"):
+            r = QMessageBox.question(self, "Foto Suprema",
+                                     "A partir de ahora las fotos que mantengas se guardarán así.\n\n"
+                                     "¿Quieres reordenar también las que ya están en «Mantener»?")
+            if r == QMessageBox.StandardButton.Yes:
+                self.v.reordenar()
 
 
 # ======================================================================
@@ -951,7 +1377,9 @@ class PaginaProgreso(QWidget):
             self.barra.setValue(1000)
             self.l_pct.setText("100 %")
             self.l_grande.setText("¡Listo!")
-            if isinstance(t, N.Organizador):
+            if isinstance(t, N.Reordenador):
+                self.l_eta.setText(f"✅  {N.num(t.copiadas)} movidas a su carpeta · {N.num(t.repetidas)} ya estaban en su sitio")
+            elif isinstance(t, N.Organizador):
                 años = sorted({k.split("/")[0] for k in t.carpetas_creadas})
                 self.l_eta.setText(f"✅  {N.num(t.copiadas)} copiadas en {len(t.carpetas_creadas)} carpetas")
                 det = ("Años: " + ", ".join(años)) if años else ""
@@ -961,7 +1389,9 @@ class PaginaProgreso(QWidget):
             else:
                 self.l_eta.setText(f"✅  Se han subido {N.num(t.copiadas)} archivos en {N.tiempo_legible(t.transcurrido())}")
         self.botones.addWidget(boton("Inicio", "secundario", self.v.ir_inicio))
-        if isinstance(t, N.Organizador):
+        if isinstance(t, N.Reordenador):
+            self.botones.addWidget(boton("Abrir «Mantener»", "primario", lambda: abrir_en_sistema(self.v.bib.ruta("keep")), G["carpeta"]))
+        elif isinstance(t, N.Organizador):
             self.botones.addWidget(boton("Abrir carpeta", "primario", lambda: abrir_en_sistema(t.destino), G["carpeta"]))
         elif self.v.bib.contar("pend"):
             self.botones.addWidget(boton("Empezar a revisar", "primario", lambda: self.v.ir_revision("pend"), G["foto"]))
@@ -1175,6 +1605,9 @@ class PaginaRevision(QWidget):
         for b in (self.b_borrar, self.b_rest):
             b.setVisible(borr)
         self._ruta_mostrada = None
+        ver_minis = bool(self.v.cfg.get("miniaturas", True))
+        for m in self.minis:
+            m.setVisible(ver_minis)
         QTimer.singleShot(0, self.mostrar)
 
     def salir(self):
@@ -1217,7 +1650,10 @@ class PaginaRevision(QWidget):
             if self._ruta_mostrada != ruta:
                 self.pila.setCurrentIndex(1)
                 self.player.setSource(QUrl.fromLocalFile(ruta))
-                self.player.play()
+                if self.v.cfg.get("autoplay", True):
+                    self.player.play()
+                else:
+                    self.player.pause()
         else:
             if self._ruta_mostrada != ruta:
                 self._soltar_video()
@@ -1282,11 +1718,14 @@ class PaginaRevision(QWidget):
         for c in (self.c_nombre, self.c_res, self.c_tam, self.c_fecha, self.c_cam):
             c.hide()
         self.c_zoom.hide()
-        if self.modo == "draft":
+        if not self.lista:
+            self.fin_titulo.setText("El borrador está vacío" if self.modo == "draft" else "No hay fotos por revisar")
+        elif self.modo == "draft":
             self.fin_titulo.setText("Borrador revisado")
         else:
             self.fin_titulo.setText("¡Has revisado todas!")
-        sub = "Si te has equivocado en alguna, pulsa «Volver atrás» las veces que necesites."
+        sub = ("Si te has equivocado en alguna, pulsa «Volver atrás» las veces que necesites." if self.lista
+               else "Sube una carpeta desde Inicio (o arrástrala a la ventana) para empezar.")
         if self.saltadas:
             donde = "Borrador" if self.modo == "draft" else "Por revisar"
             sub = f"Has saltado {N.num(self.saltadas)}: siguen en «{donde}».\n" + sub
@@ -1362,7 +1801,8 @@ class PaginaRevision(QWidget):
         textos = {"eliminar": ("🗑  Enviada al borrador", "#ff8a8e"), "favorito": ("⭐  Favorita", NAR_A),
                   "mantener": ("✔  Mantenida", VERDE), "borrar": ("🗑  Borrada para siempre", "#ff8a8e"),
                   "restaurar": ("↩  Restaurada en Mantener", VERDE), "saltar": ("⏭  Saltada", TEXTO2)}
-        self.toast.mostrar(*textos[tipo])
+        if self.v.cfg.get("avisos", True):
+            self.toast.mostrar(*textos[tipo])
         self.historial.append(reg)
         self.pos += 1
         self.mostrar()
@@ -1528,6 +1968,12 @@ class FiltroTeclas(QObject):
         return False
 
 
+OPCIONES_POR_DEFECTO = {
+    "organizar_mantener": "no", "organizar_favoritos": True, "saltar_repetidas": True,
+    "autoplay": True, "miniaturas": True, "avisos": True, "papelera": False, "organizar_modo": "meses",
+}
+
+
 class Ventana(QMainWindow):
     def __init__(self, raiz_biblioteca=None):
         super().__init__()
@@ -1537,22 +1983,65 @@ class Ventana(QMainWindow):
         except Exception:
             pass
         self.resize(1400, 900)
-        self.setMinimumSize(1050, 700)
+        self.setMinimumSize(1100, 720)
+        self.setAcceptDrops(True)
         self.cfg = N.cargar_config()
+        for k, v in OPCIONES_POR_DEFECTO.items():
+            self.cfg.setdefault(k, v)
         self.cargador = Cargador()
         self.abrir_biblioteca(raiz_biblioteca or self.cfg.get("biblioteca") or N.biblioteca_por_defecto())
 
         raiz = QWidget()
         raiz.setObjectName("raiz")
         self.setCentralWidget(raiz)
-        lay = QVBoxLayout(raiz)
+        lay = QHBoxLayout(raiz)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        # --- menú lateral
+        self.lateral = QFrame()
+        self.lateral.setObjectName("lateral")
+        self.lateral.setFixedWidth(250)
+        ll = QVBoxLayout(self.lateral)
+        ll.setContentsMargins(16, 24, 16, 18)
+        ll.setSpacing(4)
+        marca = QHBoxLayout()
+        marca.setSpacing(12)
+        marca.addWidget(Logo(44))
+        mt = QVBoxLayout()
+        mt.setSpacing(0)
+        t = etiqueta("Foto Suprema")
+        t.setStyleSheet("font-size: 18px; font-weight: 700;")
+        mt.addWidget(t)
+        mt.addWidget(etiqueta(f"v{VERSION_APP}", "muytenue"))
+        marca.addLayout(mt)
+        marca.addStretch()
+        ll.addLayout(marca)
+        ll.addSpacing(26)
+        self.nav = {}
+        for clave, glifo, texto in [("inicio", "", "Inicio"), ("revisar", G["foto"], "Revisar fotos"),
+                                    ("borrador", G["borrar"], "Borrador"), ("organizar", G["calendario"], "Organizar"),
+                                    ("ajustes", G["ajustes"], "Ajustes")]:
+            b = NavBoton(glifo, texto)
+            b.clicked.connect(lambda _=False, c=clave: self._navegar(c))
+            ll.addWidget(b)
+            self.nav[clave] = b
+        ll.addStretch()
+        ayuda = etiqueta("Consejo: arrastra una carpeta a la ventana para subirla.", "muytenue", wrap=True)
+        ll.addWidget(ayuda)
+        ll.addSpacing(10)
+        f = etiqueta(FIRMA, "firma")
+        ll.addWidget(f)
+        lay.addWidget(self.lateral)
+
         self.pila = QStackedWidget()
-        lay.addWidget(self.pila)
+        lay.addWidget(self.pila, 1)
         self.p_inicio = PaginaInicio(self)
         self.p_prog = PaginaProgreso(self)
         self.p_rev = PaginaRevision(self)
-        for p in (self.p_inicio, self.p_prog, self.p_rev):
+        self.p_org = PaginaOrganizar(self)
+        self.p_ajustes = PaginaAjustes(self)
+        for p in (self.p_inicio, self.p_prog, self.p_rev, self.p_org, self.p_ajustes):
             self.pila.addWidget(p)
         self.filtro = FiltroTeclas(self)
         QApplication.instance().installEventFilter(self.filtro)
@@ -1561,11 +2050,11 @@ class Ventana(QMainWindow):
     # ------------------------------------------------------------------
     def abrir_biblioteca(self, raiz):
         try:
-            self.bib = N.Biblioteca(raiz)
+            self.bib = N.Biblioteca(raiz, self.cfg)
         except Exception as e:
             QMessageBox.warning(None, "Foto Suprema", f"No se puede usar esa carpeta:\n{e}")
             raiz = N.biblioteca_por_defecto()
-            self.bib = N.Biblioteca(raiz)
+            self.bib = N.Biblioteca(raiz, self.cfg)
         self.bib.purgar()
         self.cfg["biblioteca"] = raiz
         N.guardar_config(self.cfg)
@@ -1574,59 +2063,102 @@ class Ventana(QMainWindow):
         t = self.p_prog.tarea
         return t is not None and t.fase != "fin"
 
-    def ir_inicio(self):
+    def _contadores(self):
+        self.nav["revisar"].poner_contador(self.bib.contar("pend"))
+        self.nav["borrador"].poner_contador(self.bib.contar("draft"))
+
+    def _marcar(self, clave):
+        for c, b in self.nav.items():
+            b.setChecked(c == clave)
+
+    def _salir_revision(self):
         if self.pila.currentWidget() is self.p_rev:
             self.p_rev.salir()
+
+    def _mostrar(self, pagina, clave, con_lateral=True):
+        self._salir_revision()
+        self.lateral.setVisible(con_lateral)
+        self._marcar(clave)
+        self._contadores()
+        self.pila.setCurrentWidget(pagina)
+
+    def _navegar(self, clave):
+        if self._ocupado():
+            self._marcar(None)
+            return
+        {"inicio": self.ir_inicio, "revisar": lambda: self.ir_revision("pend"),
+         "borrador": lambda: self.ir_revision("draft"), "organizar": self.ir_organizar,
+         "ajustes": self.ir_ajustes}[clave]()
+
+    def ir_inicio(self):
         self.p_inicio.refrescar()
-        self.pila.setCurrentWidget(self.p_inicio)
+        self._mostrar(self.p_inicio, "inicio")
+
+    def ir_organizar(self):
+        self.p_org.refrescar()
+        self._mostrar(self.p_org, "organizar")
+
+    def ir_ajustes(self):
+        self.p_ajustes.refrescar()
+        self._mostrar(self.p_ajustes, "ajustes")
 
     def ir_revision(self, modo):
-        if self.pila.currentWidget() is self.p_rev:
-            self.p_rev.salir()
-        self.pila.setCurrentWidget(self.p_rev)
+        self._mostrar(self.p_rev, "revisar" if modo == "pend" else "borrador", con_lateral=False)
         self.p_rev.empezar(modo)
 
     def _tarea(self, tarea, titulo, origen, glifo):
-        if self.pila.currentWidget() is self.p_rev:
-            self.p_rev.salir()
-        self.pila.setCurrentWidget(self.p_prog)
+        self._mostrar(self.p_prog, None, con_lateral=False)
         self.p_prog.empezar(tarea, titulo, origen, glifo)
 
+    # --- acciones -------------------------------------------------------
     def cambiar_biblioteca(self):
         r = QFileDialog.getExistingDirectory(self, "Elige dónde guardar la biblioteca", self.bib.raiz)
         if r:
             self.abrir_biblioteca(os.path.normpath(r))
-            self.ir_inicio()
+            self.ir_ajustes()
+
+    def importar_rutas(self, rutas):
+        if self._ocupado() or not rutas:
+            return
+        rutas = [os.path.normpath(r) for r in rutas]
+        origen = rutas[0] if len(rutas) == 1 else f"{len(rutas)} elementos"
+        self._tarea(N.Importador(self.bib, rutas, self.cfg.get("saltar_repetidas", True)),
+                    "Subiendo fotos", origen, G["subir"])
 
     def subir_carpeta(self):
         r = QFileDialog.getExistingDirectory(self, "Elige la carpeta con las fotos (se incluyen todas las subcarpetas)",
                                              self.cfg.get("ultima_subida", ""))
-        if not r:
-            return
-        r = os.path.normpath(r)
-        self.cfg["ultima_subida"] = r
-        N.guardar_config(self.cfg)
-        self._tarea(N.Importador(self.bib, [r]), "Subiendo fotos", r, G["subir"])
+        if r:
+            self.cfg["ultima_subida"] = os.path.normpath(r)
+            N.guardar_config(self.cfg)
+            self.importar_rutas([r])
 
     def subir_sueltas(self):
         filtro = "Fotos y vídeos (" + " ".join("*" + e for e in sorted(N.EXTENSIONES)) + ");;Todos (*.*)"
         archivos, _ = QFileDialog.getOpenFileNames(self, "Elige fotos o vídeos", self.cfg.get("ultima_subida", ""), filtro)
         if archivos:
-            self._tarea(N.Importador(self.bib, archivos), "Subiendo fotos", f"{len(archivos)} archivos elegidos", G["subir"])
+            self.importar_rutas(archivos)
 
-    def organizar(self, por_meses):
-        r = QFileDialog.getExistingDirectory(self, "¿Dónde quieres crear las carpetas organizadas?",
-                                             self.cfg.get("ultimo_destino") or self.bib.raiz)
-        if not r:
-            return
-        r = os.path.normpath(r)
-        if os.path.normcase(r).startswith(os.path.normcase(self.bib.ruta("keep"))):
-            QMessageBox.warning(self, "Foto Suprema", "Elige una carpeta que no esté dentro de «Mantener».")
-            return
-        self.cfg["ultimo_destino"] = r
-        N.guardar_config(self.cfg)
-        t = N.Organizador(self.bib, r, por_meses)
+    def organizar(self, por_meses, destino):
+        t = N.Organizador(self.bib, destino, por_meses)
         self._tarea(t, "Organizando por años y meses" if por_meses else "Organizando por años", t.destino, G["calendario"])
+
+    def reordenar(self):
+        if self._ocupado():
+            return
+        modo = {"no": "todas juntas", "anios": "por años", "meses": "por años y meses"}[self.cfg.get("organizar_mantener", "no")]
+        self._tarea(N.Reordenador(self.bib), "Reordenando «Mantener»", f"Organización: {modo}", G["calendario"])
+
+    # --- arrastrar y soltar en cualquier parte de la ventana -------------
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls() and not self._ocupado() and self.pila.currentWidget() is not self.p_rev:
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        rutas = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        if rutas:
+            e.acceptProposedAction()
+            self.importar_rutas(rutas)
 
     def closeEvent(self, e):
         if self._ocupado():
@@ -1649,7 +2181,7 @@ class Ventana(QMainWindow):
 # ======================================================================
 def preparar_app(app):
     app.setStyle("Fusion")
-    app.setStyleSheet(QSS)
+    app.setStyleSheet(QSS + QSS_EXTRA)
     f = QFont("Segoe UI")
     f.setPixelSize(14)
     app.setFont(f)
@@ -1676,7 +2208,11 @@ def autoprueba(carpeta_capturas):
     os.makedirs(os.path.join(origen, "Viaje", "Dia 2"), exist_ok=True)
     colores = [(230, 120, 40), (40, 120, 230), (60, 180, 110), (200, 60, 90), (240, 200, 60), (120, 80, 200)]
     for i in range(14):
-        im = Image.new("RGB", (2400, 1600) if i % 3 else (1200, 1800), colores[i % len(colores)])
+        w, h = (2400, 1600) if i % 3 else (1200, 1800)
+        im = Image.new("RGB", (w, h), colores[i % len(colores)])
+        # un degradado sencillo para que las capturas parezcan fotos
+        capa = Image.linear_gradient("L").resize((w, h))
+        im = Image.composite(im, Image.new("RGB", (w, h), (20, 24, 40)), capa)
         ex = Image.Exif()
         ex.get_ifd(0x8769)[36867] = f"{2007 + i % 4}:{1 + i % 12:02d}:15 12:00:00"
         ex[271], ex[272] = "Apple", "iPhone 12"
@@ -1708,17 +2244,22 @@ def autoprueba(carpeta_capturas):
         app.sendEvent(v, ev)
         esperar(0.15)
 
+    def esperar_tarea():
+        limite = time.time() + 60
+        while v.p_prog.tarea is not None and time.time() < limite:
+            esperar(0.1)
+
     captura("01_inicio_vacio.png")
-    v._tarea(N.Importador(v.bib, [origen]), "Subiendo fotos", origen, G["subir"])
-    limite = time.time() + 60
-    while v.p_prog.tarea is not None and time.time() < limite:
-        esperar(0.1)
+    v.importar_rutas([origen])
+    esperar_tarea()
     captura("02_subida_terminada.png")
     assert v.bib.contar("pend") == 15, v.bib.contar("pend")
+    v.ir_inicio()
+    captura("03_inicio_con_fotos.png")
 
     v.ir_revision("pend")
     esperar(0.8)
-    captura("03_revision.png")
+    captura("04_revision.png")
     tecla(Qt.Key.Key_Left)
     tecla(Qt.Key.Key_Up)
     tecla(Qt.Key.Key_Right)
@@ -1726,42 +2267,57 @@ def autoprueba(carpeta_capturas):
     assert v.p_rev.pos == 4, v.p_rev.pos
     v.p_rev.visor.aplicar_zoom(2.0)
     v.p_rev.visor.aplicar_zoom(1.5)
-    captura("04_zoom.png")
+    captura("05_zoom.png")
     for _ in range(3):
         tecla(Qt.Key.Key_Backspace)
     assert v.p_rev.pos == 1 and v.bib.contar("fav") == 0, (v.p_rev.pos, v.bib.contar("fav"))
+
+    # a partir de aquí, Mantener se ordena sola por años y meses
+    v.cfg["organizar_mantener"] = "meses"
     tecla(Qt.Key.Key_Up)
     while v.p_rev._actual() is not None and not N.es_video(v.p_rev._actual()):
         tecla(Qt.Key.Key_Right)
     esperar(1.0)
-    captura("05_video.png")
-    tecla(Qt.Key.Key_Left)  # el vídeo al borrador (comprueba que se suelta el archivo)
+    captura("06_video.png")
+    tecla(Qt.Key.Key_Left)
     while v.p_rev._actual() is not None:
         tecla(Qt.Key.Key_Right)
-    captura("06_final.png")
-    assert v.bib.contar("pend") == 0, v.bib.contar("pend")  # el salto se deshizo con "volver atrás"
+    captura("07_final.png")
+    assert v.bib.contar("pend") == 0, v.bib.contar("pend")
+    sub = [os.path.relpath(r, v.bib.ruta("keep")) for r in v.bib.listar("keep")]
+    assert any(os.sep in s and " - " in s for s in sub), sub   # hay fotos en AAAA/MM - Mes
 
     v.ir_revision("draft")
     esperar(0.5)
-    captura("07_borrador.png")
+    captura("08_borrador.png")
     tecla(Qt.Key.Key_Right)
     tecla(Qt.Key.Key_Left)
     tecla(Qt.Key.Key_Backspace)
     tecla(Qt.Key.Key_Left)
-    v.ir_inicio()
-    captura("08_inicio_con_datos.png")
 
+    v.ir_ajustes()
+    captura("09_ajustes.png")
+    v.cfg["organizar_mantener"] = "anios"
+    n_keep = v.bib.contar("keep")
+    v.reordenar()
+    esperar_tarea()
+    captura("10_reordenado.png")
+    sub = [os.path.relpath(r, v.bib.ruta("keep")) for r in v.bib.listar("keep")]
+    assert len(sub) == n_keep and all(s.count(os.sep) == 1 for s in sub), sub   # solo AAAA/foto
+
+    v.ir_organizar()
+    captura("11_organizar.png")
     destino = os.path.join(tmp, "Organizadas")
     os.makedirs(destino)
-    t = N.Organizador(v.bib, destino, True)
-    v._tarea(t, "Organizando por años y meses", t.destino, G["calendario"])
-    limite = time.time() + 60
-    while v.p_prog.tarea is not None and time.time() < limite:
-        esperar(0.1)
-    captura("09_organizado.png")
-    assert t.copiadas == v.bib.contar("keep") and t.errores == 0, (t.copiadas, t.errores)
-    años = {k.split("/")[0] for k in t.carpetas_creadas}
-    assert años <= {"2007", "2008", "2009", "2010", "2019"}, años
+    v.cfg["ultimo_destino"] = destino
+    v.organizar(True, destino)
+    esperar_tarea()
+    captura("12_organizado.png")
+    t_org = N.Organizador  # noqa: F841
+    años = {d for d in os.listdir(os.path.join(destino, "Fotos por años y meses"))}
+    assert años <= {"2007", "2008", "2009", "2010", "2019"} and años, años
+    v.ir_inicio()
+    captura("13_inicio_final.png")
     v.close()
     print("AUTOPRUEBA OK:", v.bib.stats)
     return 0
@@ -1779,7 +2335,6 @@ def main():
         except BaseException:
             tb = traceback.format_exc()
             print(tb, flush=True)
-            # anotación de GitHub (se ve sin iniciar sesión)
             msg = tb.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
             print(f"::error title=Autoprueba::{msg}", flush=True)
             codigo = 1

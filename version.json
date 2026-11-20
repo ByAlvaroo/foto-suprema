@@ -1,6 +1,6 @@
 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "archivos": ["foto_suprema.py", "nucleo.py"],
-  "lanzador_minimo": 1,
-  "notas": "Interfaz nueva y vídeos dentro de la app"
+  "lanzador_minimo": 2,
+  "notas": "Menú lateral, arrastrar y soltar, Ajustes, Mantener ordenada por años/meses, Papelera"
 }
