@@ -1,45 +1,58 @@
-# Compila FotoSuprema.exe en GitHub (Windows) y lo publica en "Releases".
-# Se ejecuta solo cuando cambia el lanzador, o a mano desde la pestaña "Actions".
-# Los cambios en app/ NO necesitan compilar: el .exe se los descarga solo.
-name: Compilar FotoSuprema.exe
+# 1) Prueba la app en Windows (recorre todas las pantallas y guarda capturas).
+# 2) Si la prueba pasa, compila FotoSuprema.exe y lo publica en "Releases".
+# Los cambios solo en app/ no necesitan .exe nuevo: el .exe se los descarga solo,
+# pero igualmente se prueban (y se puede ver el resultado en la pestaña Actions).
+name: Probar y compilar Foto Suprema
 
 on:
   push:
     branches: [main]
-    paths:
-      - "lanzador/**"
-      - ".github/workflows/compilar-exe.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  compilar:
+  probar:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller pillow pillow-heif
+          pip install pyside6 pillow pillow-heif
+      - name: Autoprueba de la app
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python app/foto_suprema.py --autoprueba capturas
+      - name: Guardar capturas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capturas-de-pantalla
+          path: capturas/
 
+  compilar:
+    needs: probar
+    runs-on: windows-latest
+    # solo se crea un .exe nuevo si cambia el lanzador o se pide a mano
+    if: github.event_name == 'workflow_dispatch' || contains(join(github.event.commits.*.modified, ','), 'lanzador/') || contains(join(github.event.commits.*.added, ','), 'lanzador/') || contains(github.event.head_commit.message, '[exe]')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pyside6 pillow pillow-heif
       - name: Crear el .exe
-        run: >
-          pyinstaller --noconfirm --onefile --windowed
-          --name FotoSuprema
-          --icon lanzador/icono.ico
-          --add-data "app;app"
-          --add-data "lanzador/icono.ico;."
-          --hidden-import PIL.ImageTk
-          --collect-all pillow_heif
-          lanzador/lanzador.py
-
+        run: |
+          copy version.json app\version.json
+          pyinstaller --noconfirm --onefile --windowed --name FotoSuprema --icon lanzador/icono.ico --add-data "app;app" --add-data "lanzador/icono.ico;." --hidden-import PySide6.QtMultimedia --hidden-import PySide6.QtMultimediaWidgets --collect-all pillow_heif --exclude-module tkinter lanzador/lanzador.py
       - name: Publicar en Releases
         uses: softprops/action-gh-release@v2
         with:

@@ -13,6 +13,7 @@ Organizador de fotos para limpiar miles de fotos en minutos.
   - `→` **Mantener**: la foto va a *Mantener*.
   - `↓` **Saltar**: la dejas para más tarde.
   - **↶ Volver atrás** (o `Retroceso`): deshace la última acción. Puedes pulsarlo todas las veces que quieras.
+  - **Los vídeos se reproducen dentro de la app**, con sonido, barra para avanzar, pausa (`Espacio`) y volumen.
   - Zoom con la rueda del ratón (arrastra para moverte y haz doble clic para ajustar), tira de miniaturas con las siguientes fotos, fecha y cámara de cada foto, y `V` para abrir la foto o el vídeo en el visor de Windows.
 - **Confirmar borradores**: repasas las fotos del *Borrador*. `←` las **borra para siempre** y `→` las **restaura** a *Mantener*. También hay un botón para borrar todo el borrador de una vez.
 - **Organizar por años** o **por años y meses**: copia lo que hay en *Mantener* a carpetas `2007`, `2008`… (o `2009/03 - Marzo`). Solo se crean las carpetas de años y meses en los que hay al menos una foto. La fecha se toma de las propiedades de la foto (EXIF); si no la tiene, se usa la fecha que aparece en el nombre (`IMG_20190812`, fotos de WhatsApp…) y, si tampoco, la fecha del archivo. Las fotos se copian tal cual, con la misma resolución y calidad.
@@ -43,10 +44,12 @@ Cada vez que abres el .exe, comprueba `version.json` en este repositorio:
 
 Solo hay que volver a compilar el .exe si cambias `lanzador/lanzador.py` o necesitas una librería nueva. En ese caso, sube `VERSION_LANZADOR` en `lanzador.py` y `lanzador_minimo` en `version.json`: GitHub compila el .exe nuevo y el .exe viejo se reemplaza solo.
 
+La interfaz está hecha con Qt (PySide6), que trae el reproductor de vídeo integrado.
+
 ## Estructura
 
 ```
-app/foto_suprema.py     interfaz
+app/foto_suprema.py     interfaz (Qt) + autoprueba
 app/nucleo.py           lógica (subir, mover, volver atrás, organizar, fechas)
 version.json            versión actual (lo que mira el .exe para actualizarse)
 lanzador/lanzador.py    el .exe: busca actualizaciones y abre la app
@@ -54,4 +57,6 @@ lanzador/icono.ico
 .github/workflows/      compila el .exe automáticamente en GitHub
 ```
 
-Para probar sin .exe (con Python instalado): `pip install pillow pillow-heif` y después `python app/foto_suprema.py`.
+Para probar sin .exe (con Python instalado): `pip install pyside6 pillow pillow-heif` y después `python app/foto_suprema.py`.
+
+Cada vez que haces push, GitHub prueba la app en Windows (`--autoprueba`) y guarda capturas de todas las pantallas en la pestaña **Actions → capturas-de-pantalla**. Solo se crea un .exe nuevo si cambias el lanzador o el mensaje del commit lleva `[exe]`.
